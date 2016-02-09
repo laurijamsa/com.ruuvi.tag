@@ -14,28 +14,31 @@ import android.bluetooth.le.ScanResult;
 import android.bluetooth.le.ScanSettings;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.ParcelUuid;
 import android.preference.PreferenceManager;
-import android.support.v4.app.Fragment;
+import android.app.Fragment;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.ListView;
 import android.widget.TextView;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
 /**
  * A simple {@link Fragment} subclass.
  * Activities that contain this fragment must implement the
- * {@link MainActivityFragment.OnFragmentInteractionListener} interface
  * to handle interaction events.
- * Use the {@link MainActivityFragment#newInstance} factory method to
  * create an instance of this fragment.
  */
 public class MainActivityFragment extends Fragment {
@@ -45,10 +48,15 @@ public class MainActivityFragment extends Fragment {
     private static final int REQUEST_ENABLE_BLUETOOTH = 1;
     private static final int PERMISSION_REQUEST_COARSE_LOCATION = 2;
 
+    private static final Handler handler = new Handler(Looper.getMainLooper());
+
     // The Eddystone Service UUID, 0xFEAA.
     private static final ParcelUuid EDDYSTONE_SERVICE_UUID =
             ParcelUuid.fromString("0000FEAA-0000-1000-8000-00805F9B34FB");
 
+    /* from settings activity */
+    static final String ON_LOST_TIMEOUT_SECS_KEY = "onLostTimeoutSecs";
+    static final String SHOW_DEBUG_INFO_KEY = "showDebugInfo";
 
     // An aggressive scan for nearby devices that reports immediately.
     private static final ScanSettings SCAN_SETTINGS =
@@ -59,52 +67,39 @@ public class MainActivityFragment extends Fragment {
 
     /* bl stuff */
     private BluetoothLeScanner scanner;
-    private List<ScanFilter> scanFilters;
+    //private List<ScanFilter> scanFilters;
     private ScanCallback scanCallback;
     private Map<String /* device address */, Beacon> deviceToBeaconMap = new HashMap<>();
 
     private ArrayList<Beacon> arrayList;
 
-    private OnFragmentInteractionListener mListener;
+    private SharedPreferences sharedPreferences;
+    private int onLostTimeoutMillis;
 
     public MainActivityFragment() {
         // Required empty public constructor
     }
 
-    /**
-     * Use this factory method to create a new instance of
-     * this fragment using the provided parameters.
-     *
-     * @param param1 Parameter 1.
-     * @param param2 Parameter 2.
-     * @return A new instance of fragment MainActivityFragment.
-     */
-    // TODO: Rename and change types and number of parameters
-    public static MainActivityFragment newInstance(String param1, String param2) {
-        MainActivityFragment fragment = new MainActivityFragment();
-        Bundle args = new Bundle();
-        fragment.setArguments(args);
-        return fragment;
-    }
-
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        Log.d(TAG, "running init");
+        Log.i(TAG, "running init");
         init();
         arrayList = new ArrayList<>();
         //arrayAdapter = new BeaconArrayAdapter(getActivity(), R.layout.beacon_list_item, arrayList);
 
-        scanFilters.add(new ScanFilter.Builder().setServiceUuid(EDDYSTONE_SERVICE_UUID).build());
+        //scanFilters.add(new ScanFilter.Builder().setServiceUuid(EDDYSTONE_SERVICE_UUID).build());
         scanCallback = new ScanCallback() {
             @Override
             public void onScanResult(int callbackType, ScanResult result) {
                 ScanRecord scanRecord = result.getScanRecord();
+
                 if (scanRecord == null) {
                     return;
                 }
 
                 String deviceAddress = result.getDevice().getAddress();
+                Log.i(TAG, "DeviceAddress: " + deviceAddress);
                 Beacon beacon;
                 if (!deviceToBeaconMap.containsKey(deviceAddress)) {
                     beacon = new Beacon(deviceAddress, result.getRssi());
@@ -113,89 +108,112 @@ public class MainActivityFragment extends Fragment {
                 } else {
                     deviceToBeaconMap.get(deviceAddress).lastSeenTimestamp = System.currentTimeMillis();
                     deviceToBeaconMap.get(deviceAddress).rssi = result.getRssi();
-
                 }
 
                 byte[] serviceData = scanRecord.getServiceData(EDDYSTONE_SERVICE_UUID);
-                Log.d(TAG, String.valueOf(serviceData));
+                Log.i(TAG, String.valueOf(serviceData));
             }
 
             @Override
             public void onScanFailed(int errorCode) {
                 switch (errorCode) {
                     case SCAN_FAILED_ALREADY_STARTED:
-                        Log.d(TAG, "SCAN_FAILED_ALREADY_STARTED");
+                        Log.i(TAG, "SCAN_FAILED_ALREADY_STARTED");
                         break;
                     case SCAN_FAILED_APPLICATION_REGISTRATION_FAILED:
-                        Log.d(TAG, "SCAN_FAILED_APPLICATION_REGISTRATION_FAILED");
+                        Log.i(TAG, "SCAN_FAILED_APPLICATION_REGISTRATION_FAILED");
                         break;
                     case SCAN_FAILED_FEATURE_UNSUPPORTED:
-                        Log.d(TAG, "SCAN_FAILED_FEATURE_UNSUPPORTED");
+                        Log.i(TAG, "SCAN_FAILED_FEATURE_UNSUPPORTED");
                         break;
                     case SCAN_FAILED_INTERNAL_ERROR:
-                        Log.d(TAG, "SCAN_FAILED_INTERNAL_ERROR");
+                        Log.i(TAG, "SCAN_FAILED_INTERNAL_ERROR");
                         break;
                     default:
-                        Log.d(TAG, "Scan failed, unknown error code");
+                        Log.i(TAG, "Scan failed, unknown error code");
                         break;
                 }
             }
         };
+
+        sharedPreferences = PreferenceManager.getDefaultSharedPreferences(getActivity());
+        onLostTimeoutMillis =
+                sharedPreferences.getInt(ON_LOST_TIMEOUT_SECS_KEY, 5) * 1000;
     }
 
     @Override
-    public View onCreateView(LayoutInflater inflater, ViewGroup container,
+    public View onCreateView(LayoutInflater inflater,
+                             ViewGroup container,
                              Bundle savedInstanceState) {
-        TextView textView = new TextView(getActivity());
-        textView.setText(R.string.hello_blank_fragment);
-        return textView;
+        View view = inflater.inflate(R.layout.fragment_main, container, false);
+
+        ListView listView = (ListView) view.findViewById(R.id.listView);
+        //listView.setAdapter(arrayList);
+        //listView.setEmptyView(view.findViewById(R.id.placeholder));
+        return view;
     }
 
-    // TODO: Rename method, update argument and hook method into UI event
-    public void onButtonPressed(Uri uri) {
-        if (mListener != null) {
-            mListener.onFragmentInteraction(uri);
-        }
-    }
-
-    @Override
-    public void onAttach(Activity context) {
-        super.onAttach(context);
-        if (context instanceof OnFragmentInteractionListener) {
-            mListener = (OnFragmentInteractionListener) context;
-        } else {
-            throw new RuntimeException(context.toString()
-                    + " must implement OnFragmentInteractionListener");
-        }
-    }
-
-    @Override
-    public void onDetach() {
-        super.onDetach();
-        mListener = null;
-    }
 
     @Override
     public void onPause() {
         super.onPause();
         if (scanner != null) {
+            Log.i(TAG, "scanner paused");
             scanner.stopScan(scanCallback);
         }
     }
 
-    /**
-     * This interface must be implemented by activities that contain this
-     * fragment to allow an interaction in this fragment to be communicated
-     * to the activity and potentially other fragments contained in that
-     * activity.
-     * <p/>
-     * See the Android Training lesson <a href=
-     * "http://developer.android.com/training/basics/fragments/communicating.html"
-     * >Communicating with Other Fragments</a> for more information.
-     */
-    public interface OnFragmentInteractionListener {
-        // TODO: Update argument type and name
-        void onFragmentInteraction(Uri uri);
+    @Override
+    public void onResume() {
+        super.onResume();
+
+        handler.removeCallbacksAndMessages(null);
+
+        int timeoutMillis =
+                sharedPreferences.getInt(ON_LOST_TIMEOUT_SECS_KEY, 5) * 1000;
+
+        if (timeoutMillis > 0) {  // 0 is special and means don't remove anything.
+            onLostTimeoutMillis = timeoutMillis;
+            setOnLostRunnable();
+        }
+
+        if (sharedPreferences.getBoolean(SHOW_DEBUG_INFO_KEY, false)) {
+            Runnable updateTitleWithNumberSightedBeacons = new Runnable() {
+                final String appName = getActivity().getString(R.string.app_name);
+
+                @Override
+                public void run() {
+                    getActivity().setTitle(appName + " (" + deviceToBeaconMap.size() + ")");
+                    handler.postDelayed(this, 1000);
+                }
+            };
+            handler.postDelayed(updateTitleWithNumberSightedBeacons, 1000);
+        } else {
+            getActivity().setTitle(getActivity().getString(R.string.app_name));
+        }
+
+        if (scanner != null) {
+            scanner.startScan(scanCallback);
+        }
+    }
+
+    private void setOnLostRunnable() {
+        Runnable removeLostDevices = new Runnable() {
+            @Override
+            public void run() {
+                long time = System.currentTimeMillis();
+                Iterator<Map.Entry<String, Beacon>> itr = deviceToBeaconMap.entrySet().iterator();
+                while (itr.hasNext()) {
+                    Beacon beacon = itr.next().getValue();
+                    if ((time - beacon.lastSeenTimestamp) > onLostTimeoutMillis) {
+                        itr.remove();
+                        //arrayAdapter.remove(beacon);
+                    }
+                }
+                handler.postDelayed(this, onLostTimeoutMillis);
+            }
+        };
+        handler.postDelayed(removeLostDevices, onLostTimeoutMillis);
     }
 
 
@@ -205,7 +223,7 @@ public class MainActivityFragment extends Fragment {
                 .getSystemService(Context.BLUETOOTH_SERVICE);
         BluetoothAdapter btAdapter = manager.getAdapter();
         if (btAdapter == null) {
-            Log.d(TAG, "btAdapter null");
+            Log.i(TAG, "btAdapter null");
         } else if (!btAdapter.isEnabled()) {
             Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
             this.startActivityForResult(enableBtIntent, REQUEST_ENABLE_BLUETOOTH);
